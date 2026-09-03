@@ -1,5 +1,5 @@
 /* =========================================================================
-   CLINIC WHATSAPP BOT — FAILI MOJA KAMILI
+   CLINIC WHATSAPP BOT â€” FAILI MOJA KAMILI
    Kila kitu (database, WhatsApp sender, mtiririko wa mgonjwa, dashboard,
    na server) kiko ndani ya faili hii moja. Hakuna folder za "lib" wala
    faili nyingine za code zinazohitajika.
@@ -104,14 +104,22 @@ async function listProducts() {
   return db.data.products;
 }
 
-async function addProduct(name, price) {
+async function addProduct(name, price, mfgDate, expDate) {
   const existing = db.data.products.find(
     p => p.name.toLowerCase() === name.toLowerCase()
   );
   if (existing) {
     existing.price = price;
+    if (mfgDate) existing.mfgDate = mfgDate;
+    if (expDate) existing.expDate = expDate;
   } else {
-    db.data.products.push({ name, price });
+    db.data.products.push({
+      name,
+      price,
+      mfgDate: mfgDate || '',
+      expDate: expDate || '',
+      addedAt: new Date().toISOString()
+    });
   }
   await db.write();
   return db.data.products;
@@ -166,7 +174,7 @@ async function broadcast(numbers, text) {
 }
 
 /* ------------------------------------------------------------------------
-   SEHEMU YA 3: MTIRIRIKO WA MGONJWA (PIN, reception→doctor→room3→pharmacy)
+   SEHEMU YA 3: MTIRIRIKO WA MGONJWA (PIN, receptionâ†’doctorâ†’room3â†’pharmacy)
    ------------------------------------------------------------------------ */
 
 const PINS = {
@@ -192,7 +200,7 @@ function help(role) {
     case 'room3':
       return 'Kujibu mgonjwa: JIBU <ID> <maelezo>\nMfano: JIBU 3 Vipimo vimefanyika, tayari kwa dawa';
     case 'pharmacy':
-      return 'Amri: \nTOA <ID> - kutoa dawa\nONGEZA <jina>,<bei> - kuongeza/kuhariri bidhaa\nORODHA - kuona bidhaa zote';
+      return 'Amri: \nTOA <ID> - kutoa dawa\nONGEZA <jina>,<bei> - kuongeza/kuhariri bidhaa\nONGEZA <jina>,<bei>,<tarehe ya kutengenezwa>,<exp date> - na tarehe (mfano: ONGEZA Panadol,500,2026-01-15,2027-01-15)\nORODHA - kuona bidhaa zote';
     default:
       return '';
   }
@@ -229,7 +237,7 @@ async function handleIncomingMessage(from, rawText) {
   if (role === 'reception') {
     const patient = await createPatient(text);
     await sendMessage(from, `Sawa, mgonjwa #${patient.id} amesajiliwa na ametumwa kwa Daktari.`);
-    await broadcastToRole('doctor', `🩺 Mgonjwa mpya #${patient.id}\n${text}\n\nJibu: JIBU ${patient.id} <matibabu>`);
+    await broadcastToRole('doctor', `ðŸ©º Mgonjwa mpya #${patient.id}\n${text}\n\nJibu: JIBU ${patient.id} <matibabu>`);
     return;
   }
 
@@ -241,7 +249,7 @@ async function handleIncomingMessage(from, rawText) {
     if (!patient) { await sendMessage(from, `Sijampata mgonjwa #${id}.`); return; }
     await updatePatient(id, { status: 'doctor', doctorNotes: notes });
     await sendMessage(from, `Sawa, mgonjwa #${id} ametumwa Chumba cha 3.`);
-    await broadcastToRole('room3', `📋 Mgonjwa #${id}\nTaarifa: ${patient.info}\nMatibabu ya Daktari: ${notes}\n\nJibu: JIBU ${id} <maelezo>`);
+    await broadcastToRole('room3', `ðŸ“‹ Mgonjwa #${id}\nTaarifa: ${patient.info}\nMatibabu ya Daktari: ${notes}\n\nJibu: JIBU ${id} <maelezo>`);
     return;
   }
 
@@ -253,7 +261,7 @@ async function handleIncomingMessage(from, rawText) {
     if (!patient) { await sendMessage(from, `Sijampata mgonjwa #${id}.`); return; }
     await updatePatient(id, { status: 'room3', room3Notes: notes });
     await sendMessage(from, `Sawa, mgonjwa #${id} ametumwa Pharmacy.`);
-    await broadcastToRole('pharmacy', `💊 Mgonjwa #${id} tayari kwa dawa\nTaarifa: ${patient.info}\nMatibabu: ${patient.doctorNotes}\nChumba 3: ${notes}\n\nJibu: TOA ${id}`);
+    await broadcastToRole('pharmacy', `ðŸ’Š Mgonjwa #${id} tayari kwa dawa\nTaarifa: ${patient.info}\nMatibabu: ${patient.doctorNotes}\nChumba 3: ${notes}\n\nJibu: TOA ${id}`);
     return;
   }
 
@@ -263,17 +271,25 @@ async function handleIncomingMessage(from, rawText) {
       if (products.length === 0) {
         await sendMessage(from, 'Bado hakuna bidhaa kwenye orodha.');
       } else {
-        const list = products.map(p => `• ${p.name} — Sh${p.price}`).join('\n');
+        const list = products.map(p => {
+          let line = `â€¢ ${p.name} â€” Sh${p.price}`;
+          if (p.mfgDate) line += `\n  Tengenezwa: ${p.mfgDate}`;
+          if (p.expDate) line += `\n  Inaisha: ${p.expDate}`;
+          return line;
+        }).join('\n');
         await sendMessage(from, `Bidhaa zilizopo:\n${list}`);
       }
       return;
     }
 
-    const addMatch = text.match(/^ONGEZA\s+([^,]+),\s*(\d+(\.\d+)?)$/i);
+    const addMatch = text.match(/^ONGEZA\s+([^,]+),\s*(\d+(\.\d+)?)\s*(?:,\s*([^,]*))?\s*(?:,\s*([^,]*))?$/i);
     if (addMatch) {
-      const [, name, price] = addMatch;
-      await addProduct(name.trim(), Number(price));
-      await sendMessage(from, `Sawa, "${name.trim()}" imesajiliwa kwa bei Sh${price}.`);
+      const [, name, price, , mfgDate, expDate] = addMatch;
+      await addProduct(name.trim(), Number(price), (mfgDate || '').trim(), (expDate || '').trim());
+      let reply = `Sawa, "${name.trim()}" imesajiliwa kwa bei Sh${price}.`;
+      if (mfgDate) reply += ` Tengenezwa: ${mfgDate.trim()}.`;
+      if (expDate) reply += ` Inaisha: ${expDate.trim()}.`;
+      await sendMessage(from, reply);
       return;
     }
 
@@ -283,7 +299,7 @@ async function handleIncomingMessage(from, rawText) {
       const patient = await getPatient(id);
       if (!patient) { await sendMessage(from, `Sijampata mgonjwa #${id}.`); return; }
       await updatePatient(id, { status: 'kamili' });
-      await sendMessage(from, `Sawa, mgonjwa #${id} amepewa dawa. Huduma imekamilika ✅`);
+      await sendMessage(from, `Sawa, mgonjwa #${id} amepewa dawa. Huduma imekamilika âœ…`);
       return;
     }
 
@@ -300,7 +316,7 @@ const STATUS_LABELS = {
   reception: { label: 'Anasubiri Daktari', color: '#D4A017' },
   doctor: { label: 'Anasubiri Chumba 3', color: '#2E7D6B' },
   room3: { label: 'Tayari kwa Dawa', color: '#4472C4' },
-  kamili: { label: 'Kamili ✅', color: '#5C8C7F' }
+  kamili: { label: 'Kamili âœ…', color: '#5C8C7F' }
 };
 
 function escapeHtml(str) {
@@ -343,12 +359,12 @@ function renderLoginPage(error) {
   return `<!DOCTYPE html>
 <html lang="sw"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dashboard — Ingia</title>
+<title>Dashboard â€” Ingia</title>
 ${baseStyles()}
 </head><body>
 <div class="wrap login-wrap">
   <div class="login-card">
-    <h1>🩺 Dashboard ya Daktari</h1>
+    <h1>ðŸ©º Dashboard ya Daktari</h1>
     <p class="sub">Ingiza password kuona taarifa za kliniki</p>
     <form method="POST" action="/dashboard">
       <input type="password" name="password" placeholder="Password" autofocus>
@@ -378,18 +394,25 @@ async function renderDashboard() {
       }).join('');
 
   const productRows = products.length === 0
-    ? `<tr><td colspan="2" class="empty">Bado hakuna bidhaa</td></tr>`
-    : products.map(p => `<tr><td>${escapeHtml(p.name)}</td><td>Sh${p.price}</td></tr>`).join('');
+    ? `<tr><td colspan="4" class="empty">Bado hakuna bidhaa</td></tr>`
+    : products.map(p => {
+        const today = new Date().toISOString().slice(0,10);
+        const isExpired = p.expDate && p.expDate < today;
+        const expCell = p.expDate
+          ? `<span style="${isExpired ? 'color:#B4483C;font-weight:700;' : ''}">${escapeHtml(p.expDate)}${isExpired ? ' âš ï¸' : ''}</span>`
+          : 'â€”';
+        return `<tr><td>${escapeHtml(p.name)}</td><td>Sh${p.price}</td><td>${p.mfgDate ? escapeHtml(p.mfgDate) : 'â€”'}</td><td>${expCell}</td></tr>`;
+      }).join('');
 
   return `<!DOCTYPE html>
 <html lang="sw"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dashboard — Daktari</title>
+<title>Dashboard â€” Daktari</title>
 ${baseStyles()}
 </head><body>
 <div class="wrap">
   <div class="topbar">
-    <h1>🩺 Dashboard ya Kliniki</h1>
+    <h1>ðŸ©º Dashboard ya Kliniki</h1>
     <a href="/dashboard/logout" class="logout">Toka</a>
   </div>
   <div class="stats">
@@ -407,10 +430,10 @@ ${baseStyles()}
   </div>
   <h2>Bidhaa za Pharmacy</h2>
   <div class="table-wrap">
-    <table><thead><tr><th>Jina</th><th>Bei</th></tr></thead>
+    <table><thead><tr><th>Jina</th><th>Bei</th><th>Tengenezwa</th><th>Exp Date</th></tr></thead>
     <tbody>${productRows}</tbody></table>
   </div>
-  <p class="note">Dashboard hii ni ya kuangalia tu (view-only) — mabadiliko yote yanafanyika kupitia WhatsApp.</p>
+  <p class="note">Dashboard hii ni ya kuangalia tu (view-only) â€” mabadiliko yote yanafanyika kupitia WhatsApp.</p>
 </div>
 </body></html>`;
 }
@@ -444,7 +467,7 @@ function isAuthed(req) {
 }
 
 app.get('/', (req, res) => {
-  res.send('Clinic WhatsApp bot iko live ✅ (dashboard: /dashboard)');
+  res.send('Clinic WhatsApp bot iko live âœ… (dashboard: /dashboard)');
 });
 
 app.get('/webhook', (req, res) => {
@@ -518,7 +541,7 @@ function renderTestPage() {
   return `<!DOCTYPE html>
 <html lang="sw"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Clinic Bot — Jaribio la Kweli</title>
+<title>Clinic Bot â€” Jaribio la Kweli</title>
 <style>
   *{box-sizing:border-box;}
   body{margin:0;background:#082B29;font-family:system-ui,-apple-system,sans-serif;display:flex;justify-content:center;padding:14px;}
@@ -543,11 +566,11 @@ function renderTestPage() {
 </style>
 </head><body>
 <div class="wrap">
-  <h1>🏥 Clinic Bot — Jaribio la Kweli</h1>
-  <p class="sub">Ukifungua hii kwenye vifaa viwili tofauti, zote zinaongea na server hii hii — matokeo halisi.</p>
+  <h1>ðŸ¥ Clinic Bot â€” Jaribio la Kweli</h1>
+  <p class="sub">Ukifungua hii kwenye vifaa viwili tofauti, zote zinaongea na server hii hii â€” matokeo halisi.</p>
   <div class="card">
     <div class="setup">
-      <label>Namba yako (yoyote — mfano: 0712345678)</label>
+      <label>Namba yako (yoyote â€” mfano: 0712345678)</label>
       <input id="phone" placeholder="0712345678">
       <div class="status" id="statusLine">Ingiza namba yako kuanza</div>
     </div>
@@ -555,10 +578,10 @@ function renderTestPage() {
     <div class="quickrow" id="quickrow"></div>
     <div class="composer">
       <input id="input" type="text" placeholder="Andika PIN au ujumbe...">
-      <button id="sendBtn">➤</button>
+      <button id="sendBtn">âž¤</button>
     </div>
   </div>
-  <a class="dashlink" href="/dashboard">📊 Fungua Dashboard ya Daktari</a>
+  <a class="dashlink" href="/dashboard">ðŸ“Š Fungua Dashboard ya Daktari</a>
 </div>
 <script>
 let phone = localStorage.getItem('clinicPhone') || '';
@@ -626,6 +649,6 @@ app.listen(PORT, () => {
   console.log(`Clinic bot inasikiliza kwenye port ${PORT}`);
   console.log(`Dashboard: http://localhost:${PORT}/dashboard`);
   if (!WHATSAPP_TOKEN) {
-    console.log('⚠️  WHATSAPP_TOKEN haijawekwa bado — ujumbe utaonekana tu kwenye console (simulation mode).');
+    console.log('âš ï¸  WHATSAPP_TOKEN haijawekwa bado â€” ujumbe utaonekana tu kwenye console (simulation mode).');
   }
 });
